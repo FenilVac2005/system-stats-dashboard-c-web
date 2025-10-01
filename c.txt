@@ -1,0 +1,113 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <string.h>
+#include <unistd.h>
+#include <termios.h>
+#include <sys/stat.h>
+
+#define MAX_ITEMS 1024
+
+struct termios orig_term;
+
+void disable_raw_mode() {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_term);
+}
+
+void enable_raw_mode() {
+    struct termios raw;
+    tcgetattr(STDIN_FILENO, &orig_term);
+    atexit(disable_raw_mode);
+    raw = orig_term;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+void list_dir(const char *path, char items[][256], int *count) {
+    DIR *dir = opendir(path);
+    struct dirent *entry;
+    *count = 0;
+    while ((entry = readdir(dir)) != NULL && *count < MAX_ITEMS) {
+        strcpy(items[*count], entry->d_name);
+        (*count)++;
+    }
+    closedir(dir);
+}
+
+void print_menu(char items[][256], int count, int selected) {
+    system("clear");
+    printf("📁 Terminal File Explorer - Press 'q' to quit\n\n");
+    for (int i = 0; i < count; i++) {
+        if (i == selected)
+            printf(" > %s\n", items[i]);
+        else
+            printf("   %s\n", items[i]);
+    }
+    printf("\nUse ↑ ↓ to navigate, Enter to open dir/view file\n");
+}
+
+void view_file(const char *path) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) {
+        perror("Failed to open file");
+        return;
+    }
+    system("clear");
+    printf("📄 Viewing: %s\n\n", path);
+    char line[256];
+    while (fgets(line, sizeof(line), fp))
+        printf("%s", line);
+    fclose(fp);
+    printf("\n\nPress any key to go back...");
+    getchar();
+}
+
+int main() {
+    char cwd[1024];
+    getcwd(cwd, sizeof(cwd));
+
+    char items[MAX_ITEMS][256];
+    int count = 0, selected = 0;
+    char input;
+
+    enable_raw_mode();
+
+    while (1) {
+        list_dir(cwd, items, &count);
+        print_menu(items, count, selected);
+
+        input = getchar();
+
+        if (input == 'q')
+            break;
+        else if (input == '\033') {
+            getchar(); // [
+            switch (getchar()) {
+                case 'A': // up
+                    if (selected > 0) selected--;
+                    break;
+                case 'B': // down
+                    if (selected < count - 1) selected++;
+                    break;
+            }
+        } else if (input == '\n') {
+            char selected_path[1024];
+            snprintf(selected_path, sizeof(selected_path), "%s/%s", cwd, items[selected]);
+
+            struct stat s;
+            stat(selected_path, &s);
+
+            if (S_ISDIR(s.st_mode)) {
+                chdir(selected_path);
+                getcwd(cwd, sizeof(cwd));
+                selected = 0;
+            } else {
+                view_file(selected_path);
+            }
+        }
+    }
+
+    disable_raw_mode();
+    printf("\nExited File Explorer.\n");
+    return 0;
+}
